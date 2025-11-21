@@ -70,7 +70,7 @@ def add_label_with_line(image):
 
     # フォント設定
     try:
-        font = ImageFont.truetype("C:/Windows/Fonts/msgothic.ttc", font_size)
+        font = ImageFont.truetype("ipaexg.ttf", font_size)
     except:
         font = ImageFont.load_default()
 
@@ -118,4 +118,5 @@ if uploaded_file is not None:
         data=byte_im,
         file_name="processed_map_auto.png",
         mime="image/png"
+
     )
