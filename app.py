@@ -102,7 +102,6 @@ def calculate_path_score(image, points):
             y = int(p1[1] * (1-t) + p2[1] * t)
             if 0 <= y < gray_img.shape[0] and 0 <= x < gray_img.shape[1]:
                 brightness = gray_img[y, x]
-                # 「薄いグレー（明るさ215〜250）」は建物なので超避ける
                 if 215 < brightness < 250:
                     score += 1000
                 else:
@@ -152,11 +151,11 @@ def draw_label(image, target_x, target_y, label_text, mode):
     elif mode == "カギ型（横優先）": best_points = path_horz
     elif mode == "カギ型（縦優先）": best_points = path_vert
 
-    # 線を描く（赤色・太さ3）
+    # 線を描く
     for i in range(len(best_points) - 1):
         draw.line([best_points[i], best_points[i+1]], fill="red", width=3)
     
-    # 白い箱を描く（不透明）
+    # 白い箱を描く
     draw.rectangle((rect_left, rect_top, rect_right, rect_bottom), fill="white", outline="red", width=3)
     
     # 文字を描く
@@ -168,86 +167,77 @@ def draw_label(image, target_x, target_y, label_text, mode):
 
 # --- 🏠 アプリ画面の構成 ---
 st.title("📍 建築現場マップ作成ツール")
-st.markdown("道路の上など、**文字を置きたい場所をクリック**してください。AIが**薄いグレー（建物）**を避けて線を引きます。")
 
-# ＝＝＝ サイドバー（設定エリア） ＝＝＝
-st.sidebar.header("📁 1. 保存先の設定")
-jurisdiction = st.sidebar.radio("管轄を選択", list(DRIVE_IDS.keys()))
-ROOT_ID = DRIVE_IDS[jurisdiction]
+# ＝＝＝ 1. 地図の設定とアップロード ＝＝＝
+st.subheader("⚙️ 1. 地図の設定とアップロード")
+col_set1, col_set2 = st.columns(2)
+with col_set1:
+    label_text = st.text_input("吹き出しの文字", "建築現場")
+with col_set2:
+    line_mode = st.selectbox("線の引き方", ("自動（建物回避）", "直線固定", "カギ型（横優先）", "カギ型（縦優先）"))
 
-if jurisdiction == "工務店管轄":
-    staff_list = list_subfolders(ROOT_ID)
-    selected_staff = st.sidebar.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name']) if staff_list else None
-    current_parent_id = selected_staff['id'] if selected_staff else ROOT_ID
-else:
-    current_parent_id = ROOT_ID
+uploaded_file = st.file_uploader("現場のスクショをアップロードしてください", type=["png", "jpg", "jpeg"])
 
-customer_list = list_subfolders(current_parent_id) if current_parent_id else []
-selected_customer = st.sidebar.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
-
-st.sidebar.write("---")
-st.sidebar.header("✏️ 2. 地図の設定")
-label_text = st.sidebar.text_input("吹き出しの文字", "建築現場")
-line_mode = st.sidebar.selectbox("線の引き方", ("自動（建物回避）", "直線固定", "カギ型（横優先）", "カギ型（縦優先）"))
-
-st.sidebar.write("---")
-if st.sidebar.button("🔄 ログイン状態をリセットする"):
-    if "credentials" in st.session_state:
-        del st.session_state.credentials
-    st.rerun()
-
-# ＝＝＝ メイン画面（地図作成エリア） ＝＝＝
-st.subheader("🎨 3. 地図の作成")
-uploaded_file = st.file_uploader("画像をアップロード", type=["png", "jpg", "jpeg"])
-
-if uploaded_file and selected_customer:
+# ＝＝＝ 2. 地図作成エリア ＝＝＝
+if uploaded_file:
+    st.write("---")
+    st.subheader("🎨 2. 地図の作成")
     image = Image.open(uploaded_file).convert("RGB")
     
-    # 画面幅に合わせてリサイズ（クリック座標を正しく取るため）
     base_width = 700
     w_percent = (base_width / float(image.size[0]))
     h_size = int((float(image.size[1]) * float(w_percent)))
     resized_image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
 
     st.info("👇 **画像の上をクリックして場所を指定してください**")
-    
-    # クリック検知パーツ
     coords = streamlit_image_coordinates(resized_image, key="click")
 
     if coords:
         target_x, target_y = coords['x'], coords['y']
         
-        # 画像を作成
+        # 画像を作成して表示
         result_image = draw_label(resized_image.copy(), target_x, target_y, label_text, line_mode)
-        
-        # 表示
         st.image(result_image)
 
-        # ＝＝＝ Googleドライブへ保存 ＆ ダウンロードエリア ＝＝＝
+        # ＝＝＝ 3. 保存エリア（ここに移動しました！） ＝＝＝
         st.write("---")
-        st.subheader("🚀 4. 完成した地図の保存")
+        st.subheader("🚀 3. ドライブのフォルダに保存")
         
-        # ボタンを横並びに配置
-        col1, col2 = st.columns(2)
+        # 管轄の選択
+        st.markdown("**保存先のフォルダを選んでください**")
+        jurisdiction = st.radio("管轄を選択", list(DRIVE_IDS.keys()), horizontal=True)
+        ROOT_ID = DRIVE_IDS[jurisdiction]
+
+        # 担当者とお客様の選択（左右に並べてスッキリと）
+        col_folder1, col_folder2 = st.columns(2)
         
-        # [手動ダウンロード機能]
-        with col1:
-            buf = io.BytesIO()
-            result_image.save(buf, format="PNG")
-            st.download_button("📥 パソコンにダウンロード", buf.getvalue(), "map_final.png", "image/png")
-            
-        # [Googleドライブ自動保存機能]
-        with col2:
+        with col_folder1:
+            if jurisdiction == "工務店管轄":
+                staff_list = list_subfolders(ROOT_ID)
+                selected_staff = st.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name']) if staff_list else None
+                current_parent_id = selected_staff['id'] if selected_staff else ROOT_ID
+            else:
+                current_parent_id = ROOT_ID
+                st.write("※不動産管轄は直接お客様フォルダを選択します")
+        
+        with col_folder2:
+            customer_list = list_subfolders(current_parent_id) if current_parent_id else []
+            selected_customer = st.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
+
+        # お客様が選ばれたら保存ボタンを表示
+        if selected_customer:
             with st.spinner("「現場までの地図」フォルダを確認中..."):
                 target_folder = find_map_folder_auto(selected_customer['id'])
             
             if target_folder:
                 st.success(f"保存先：{selected_customer['name']} ＞ {target_folder['name']}")
                 
-                if st.button("☁️ 「挨拶チラシ地図」としてドライブに保存"):
+                # パソコン保存ボタンを消し、ドライブ保存ボタンをドーンと配置
+                if st.button("☁️ このフォルダに「挨拶チラシ地図」として保存する", type="primary"):
                     with st.spinner("アップロード中..."):
                         try:
-                            # 巻き戻し（getvalue()を使わずに再度最初から読み込ませる）
+                            buf = io.BytesIO()
+                            result_image.save(buf, format="PNG")
                             buf.seek(0)
                             
                             file_name = "挨拶チラシ地図.png"
@@ -261,10 +251,13 @@ if uploaded_file and selected_customer:
                             st.error(f"保存エラー: {e}")
             else:
                 st.error(f"❌ 「現場までの地図」フォルダが見つかりません。")
-    else:
-        st.warning("地図の上をクリックして、文字の配置場所を決めてください。")
-
-elif not uploaded_file:
+                
+else:
     st.info("👆 まずは地図のスクショをアップロードしてください。")
-elif not selected_customer:
-    st.warning("👈 左側のメニューでお客様名（現場名）を選んでください。")
+
+# サイドバーにリセットボタンだけひっそりと残す
+st.sidebar.title("設定")
+if st.sidebar.button("🔄 ログイン状態をリセットする"):
+    if "credentials" in st.session_state:
+        del st.session_state.credentials
+    st.rerun()
