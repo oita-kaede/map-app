@@ -18,7 +18,6 @@ st.set_page_config(page_title="建築現場マップ作成ツール", layout="wi
 
 # --- 🔐 Google認証 ---
 def get_flow():
-    # Secretsから鍵を読み込む
     client_config = json.loads(st.secrets["GCP_OAUTH_JSON"])
     flow = Flow.from_client_config(
         client_config,
@@ -42,21 +41,21 @@ if "credentials" not in st.session_state:
 
 drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
 
-# --- 📁 フォルダ操作関数 ---
-def list_subfolders(parent_id, root_id):
+# --- 📁 フォルダ操作関数（エラー修正版） ---
+def list_subfolders(parent_id):
     """指定したフォルダ内のフォルダ一覧を取得"""
     query = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     response = drive_service.files().list(
-        q=query, spaces='drive', corpora='drive', driveId=root_id,
+        q=query, spaces='drive',
         includeItemsFromAllDrives=True, supportsAllDrives=True, fields='files(id, name)'
     ).execute()
     return sorted(response.get('files', []), key=lambda x: x['name'])
 
-def find_map_folder_auto(parent_id, root_id):
+def find_map_folder_auto(parent_id):
     """「現場までの地図」という名前のフォルダを自動で探す"""
     query = f"name contains '現場までの地図' and mimeType = 'application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed = false"
     response = drive_service.files().list(
-        q=query, spaces='drive', corpora='drive', driveId=root_id,
+        q=query, spaces='drive',
         includeItemsFromAllDrives=True, supportsAllDrives=True, fields='files(id, name)'
     ).execute()
     files = response.get('files', [])
@@ -67,19 +66,19 @@ st.title("📍 建築現場マップ作成ツール")
 
 # 1. サイドバーで保存先を「手動」でたどる
 st.sidebar.header("📋 1. 保存先の設定")
-jurisdiction = st.sidebar.radio("管轄を選択", list(DRIVE_IDS.keys())) #
+jurisdiction = st.sidebar.radio("管轄を選択", list(DRIVE_IDS.keys()))
 ROOT_ID = DRIVE_IDS[jurisdiction]
 
 # 担当者選択（工務店のみ）
 if jurisdiction == "工務店管轄":
-    staff_list = list_subfolders(ROOT_ID, ROOT_ID)
+    staff_list = list_subfolders(ROOT_ID)
     selected_staff = st.sidebar.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name'])
     current_parent_id = selected_staff['id'] if selected_staff else ROOT_ID
 else:
     current_parent_id = ROOT_ID
 
 # お客様・現場フォルダ選択
-customer_list = list_subfolders(current_parent_id, ROOT_ID)
+customer_list = list_subfolders(current_parent_id)
 selected_customer = st.sidebar.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name'])
 
 st.write("---")
@@ -98,7 +97,7 @@ if uploaded_file and selected_customer:
     st.subheader("🚀 3. Googleドライブへ保存")
     
     with st.spinner("「現場までの地図」フォルダを確認中..."):
-        target_folder = find_map_folder_auto(selected_customer['id'], ROOT_ID) #
+        target_folder = find_map_folder_auto(selected_customer['id'])
     
     if target_folder:
         st.success(f"保存先：{selected_customer['name']} ＞ {target_folder['name']}")
@@ -111,7 +110,7 @@ if uploaded_file and selected_customer:
                     image.save(buf, format="PNG")
                     buf.seek(0)
                     
-                    # ✨ ファイル名を指定通りに修正
+                    # ファイル名を指定通りに修正
                     file_name = "挨拶チラシ地図.png"
                     
                     file_metadata = {'name': file_name, 'parents': [target_folder['id']]}
