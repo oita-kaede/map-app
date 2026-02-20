@@ -182,5 +182,5 @@ if uploaded_file is not None:
     # ダウンロードボタン
     buf = io.BytesIO()
     result_image.save(buf, format="PNG")
-    st.download_button("📥 画像をダウンロード", buf.getvalue(), "map_final.png", "image/png")
+    st.download_button("📥 画像をダウンロード", buf.getvalue(), "挨拶チラシ地図.png", "image/png")
 
