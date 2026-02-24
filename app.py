@@ -102,6 +102,7 @@ def calculate_path_score(image, points):
             y = int(p1[1] * (1-t) + p2[1] * t)
             if 0 <= y < gray_img.shape[0] and 0 <= x < gray_img.shape[1]:
                 brightness = gray_img[y, x]
+                # 「薄いグレー（明るさ215〜250）」は建物なので超避ける
                 if 215 < brightness < 250:
                     score += 1000
                 else:
@@ -110,8 +111,8 @@ def calculate_path_score(image, points):
     if sample_count == 0: return 9999999
     return score / sample_count
 
-# --- 🎨 3. 線と文字を描く ---
-def draw_label(image, target_x, target_y, label_text, mode):
+# --- 🎨 3. 線と文字を描く（常に建物回避モード） ---
+def draw_label(image, target_x, target_y, label_text):
     draw = ImageDraw.Draw(image)
     pin_x, pin_y = get_pin_tip_position(image)
     
@@ -132,24 +133,23 @@ def draw_label(image, target_x, target_y, label_text, mode):
     rect_right = rect_left + w
     rect_bottom = rect_top + h
 
+    # ルート候補を作成
     path_straight = [(center_x, center_y), (pin_x, pin_y)]
     path_horz = [(center_x, center_y), (pin_x, center_y), (pin_x, pin_y)]
     path_vert = [(center_x, center_y), (center_x, pin_y), (pin_x, pin_y)]
-    best_points = path_straight
 
-    if mode == "自動（建物回避）":
-        scores = {
-            '直線': calculate_path_score(image, path_straight),
-            '横ルート': calculate_path_score(image, path_horz),
-            '縦ルート': calculate_path_score(image, path_vert)
-        }
-        best_route = min(scores, key=scores.get)
-        if best_route == '直線': best_points = path_straight
-        elif best_route == '横ルート': best_points = path_horz
-        else: best_points = path_vert
-    elif mode == "直線固定": best_points = path_straight
-    elif mode == "カギ型（横優先）": best_points = path_horz
-    elif mode == "カギ型（縦優先）": best_points = path_vert
+    # --- 常に「建物回避」のロジックを実行 ---
+    scores = {
+        '直線': calculate_path_score(image, path_straight),
+        '横ルート': calculate_path_score(image, path_horz),
+        '縦ルート': calculate_path_score(image, path_vert)
+    }
+    # 一番スコアが低い（安全な）ルートを選ぶ
+    best_route = min(scores, key=scores.get)
+
+    if best_route == '直線': best_points = path_straight
+    elif best_route == '横ルート': best_points = path_horz
+    else: best_points = path_vert
 
     # 線を描く
     for i in range(len(best_points) - 1):
@@ -170,11 +170,7 @@ st.title("📍 建築現場マップ作成ツール")
 
 # ＝＝＝ 1. 地図の設定とアップロード ＝＝＝
 st.subheader("⚙️ 1. 地図の設定とアップロード")
-col_set1, col_set2 = st.columns(2)
-with col_set1:
-    label_text = st.text_input("吹き出しの文字", "建築現場")
-with col_set2:
-    line_mode = st.selectbox("線の引き方", ("自動（建物回避）", "直線固定", "カギ型（横優先）", "カギ型（縦優先）"))
+label_text = st.text_input("吹き出しの文字（任意）", "建築現場")
 
 uploaded_file = st.file_uploader("現場のスクショをアップロードしてください", type=["png", "jpg", "jpeg"])
 
@@ -189,26 +185,38 @@ if uploaded_file:
     h_size = int((float(image.size[1]) * float(w_percent)))
     resized_image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
 
-    st.info("👇 **画像の上をクリックして場所を指定してください**")
+    st.info("👇 **道路の上など、文字を置きたい場所をクリックしてください**（AIが建物を避けて線を引きます）")
     coords = streamlit_image_coordinates(resized_image, key="click")
 
     if coords:
         target_x, target_y = coords['x'], coords['y']
         
-        # 画像を作成して表示
-        result_image = draw_label(resized_image.copy(), target_x, target_y, label_text, line_mode)
+        # 画像を作成（モード選択なしで呼び出す）
+        result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
         st.image(result_image)
 
-        # ＝＝＝ 3. 保存エリア（ここに移動しました！） ＝＝＝
+        # ＝＝＝ 3. 保存・ダウンロードエリア ＝＝＝
         st.write("---")
-        st.subheader("🚀 3. ドライブのフォルダに保存")
+        st.subheader("🚀 3. 地図の保存・ダウンロード")
+
+        # 手動ダウンロード用のバッファを作成
+        buf_dl = io.BytesIO()
+        result_image.save(buf_dl, format="PNG")
+        
+        # ダウンロードボタンを設置（逃げ道用）
+        st.markdown("**📁 パソコンに保存する（手動用）**")
+        st.download_button("📥 ここから「挨拶チラシ地図.png」をダウンロード", buf_dl.getvalue(), "挨拶チラシ地図.png", "image/png")
+        
+        st.write("---")
+
+        # ＝＝＝ Googleドライブ保存エリア ＝＝＝
+        st.markdown("**☁️ ドライブのフォルダに保存する（自動用）**")
         
         # 管轄の選択
-        st.markdown("**保存先のフォルダを選んでください**")
         jurisdiction = st.radio("管轄を選択", list(DRIVE_IDS.keys()), horizontal=True)
         ROOT_ID = DRIVE_IDS[jurisdiction]
 
-        # 担当者とお客様の選択（左右に並べてスッキリと）
+        # 担当者とお客様の選択
         col_folder1, col_folder2 = st.columns(2)
         
         with col_folder1:
@@ -232,17 +240,17 @@ if uploaded_file:
             if target_folder:
                 st.success(f"保存先：{selected_customer['name']} ＞ {target_folder['name']}")
                 
-                # パソコン保存ボタンを消し、ドライブ保存ボタンをドーンと配置
                 if st.button("☁️ このフォルダに「挨拶チラシ地図」として保存する", type="primary"):
                     with st.spinner("アップロード中..."):
                         try:
-                            buf = io.BytesIO()
-                            result_image.save(buf, format="PNG")
-                            buf.seek(0)
+                            # ドライブ保存用に別のバッファを作成
+                            buf_drive = io.BytesIO()
+                            result_image.save(buf_drive, format="PNG")
+                            buf_drive.seek(0)
                             
                             file_name = "挨拶チラシ地図.png"
                             file_metadata = {'name': file_name, 'parents': [target_folder['id']]}
-                            media = MediaIoBaseUpload(buf, mimetype='image/png')
+                            media = MediaIoBaseUpload(buf_drive, mimetype='image/png')
                             drive_service.files().create(body=file_metadata, media_body=media, supportsAllDrives=True).execute()
                             
                             st.success(f"✅ 「{target_folder['name']}」フォルダに保存しました！")
@@ -251,11 +259,12 @@ if uploaded_file:
                             st.error(f"保存エラー: {e}")
             else:
                 st.error(f"❌ 「現場までの地図」フォルダが見つかりません。")
+                st.warning("☝️ ドライブ上にフォルダがない場合は、上の「📥 ダウンロード」ボタンからパソコンに保存してください。")
                 
 else:
     st.info("👆 まずは地図のスクショをアップロードしてください。")
 
-# サイドバーにリセットボタンだけひっそりと残す
+# サイドバー（リセットボタンのみ）
 st.sidebar.title("設定")
 if st.sidebar.button("🔄 ログイン状態をリセットする"):
     if "credentials" in st.session_state:
