@@ -40,9 +40,13 @@ if "credentials" not in st.session_state:
             st.session_state.credentials = flow.credentials
             st.query_params.clear()
             st.rerun()
-        except Exception:
-            st.query_params.clear()
-            st.rerun()
+        except Exception as e:
+            # 🌟 ここを変更：エラーを隠さずに表示して止める！
+            st.error(f"⚠️ ログイン処理でエラーが発生しました。詳細: {e}")
+            if st.button("🔄 URLを綺麗にして最初からやり直す"):
+                st.query_params.clear()
+                st.rerun()
+            st.stop()
     st.stop()
 
 drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
@@ -191,7 +195,7 @@ if uploaded_file:
     if coords:
         target_x, target_y = coords['x'], coords['y']
         
-        # 画像を作成（モード選択なしで呼び出す）
+        # 画像を作成
         result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
         st.image(result_image)
 
@@ -199,24 +203,18 @@ if uploaded_file:
         st.write("---")
         st.subheader("🚀 3. 地図の保存・ダウンロード")
 
-        # 手動ダウンロード用のバッファを作成
         buf_dl = io.BytesIO()
         result_image.save(buf_dl, format="PNG")
         
-        # ダウンロードボタンを設置（逃げ道用）
         st.markdown("**📁 パソコンに保存する（手動用）**")
         st.download_button("📥 ここから「挨拶チラシ地図.png」をダウンロード", buf_dl.getvalue(), "挨拶チラシ地図.png", "image/png")
         
         st.write("---")
 
-        # ＝＝＝ Googleドライブ保存エリア ＝＝＝
         st.markdown("**☁️ ドライブのフォルダに保存する（自動用）**")
-        
-        # 管轄の選択
         jurisdiction = st.radio("管轄を選択", list(DRIVE_IDS.keys()), horizontal=True)
         ROOT_ID = DRIVE_IDS[jurisdiction]
 
-        # 担当者とお客様の選択
         col_folder1, col_folder2 = st.columns(2)
         
         with col_folder1:
@@ -232,7 +230,6 @@ if uploaded_file:
             customer_list = list_subfolders(current_parent_id) if current_parent_id else []
             selected_customer = st.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
 
-        # お客様が選ばれたら保存ボタンを表示
         if selected_customer:
             with st.spinner("「現場までの地図」フォルダを確認中..."):
                 target_folder = find_map_folder_auto(selected_customer['id'])
@@ -243,7 +240,6 @@ if uploaded_file:
                 if st.button("☁️ このフォルダに「挨拶チラシ地図」として保存する", type="primary"):
                     with st.spinner("アップロード中..."):
                         try:
-                            # ドライブ保存用に別のバッファを作成
                             buf_drive = io.BytesIO()
                             result_image.save(buf_drive, format="PNG")
                             buf_drive.seek(0)
@@ -264,7 +260,6 @@ if uploaded_file:
 else:
     st.info("👆 まずは地図のスクショをアップロードしてください。")
 
-# サイドバー（リセットボタンのみ）
 st.sidebar.title("設定")
 if st.sidebar.button("🔄 ログイン状態をリセットする"):
     if "credentials" in st.session_state:
