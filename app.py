@@ -17,6 +17,13 @@ DRIVE_IDS = {
 
 st.set_page_config(page_title="建築現場マップ作成ツール", layout="wide", page_icon="📍")
 
+# --- 🧠 サーバーの記憶領域（タブが変わっても忘れないメモ） ---
+@st.cache_resource
+def get_auth_memory():
+    return {}
+
+auth_memory = get_auth_memory()
+
 # --- 🔐 Google認証 ---
 def get_flow():
     client_config = json.loads(st.secrets["GCP_OAUTH_JSON"])
@@ -30,24 +37,32 @@ def get_flow():
 if "credentials" not in st.session_state:
     st.title("🔒 Googleログインが必要です")
     flow = get_flow()
-    auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
-    st.info("会社のアカウントでログインして、Googleドライブへの保存を許可してください。")
-    st.link_button("Googleでログイン", auth_url)
     
     if "code" in st.query_params:
         try:
+            # 🌟 Googleから戻ってきた時：サーバーの記憶から合言葉を復元する！
+            state = st.query_params.get("state")
+            if state in auth_memory:
+                flow.code_verifier = auth_memory.pop(state) # 記憶から取り出してセット
+
             flow.fetch_token(code=st.query_params["code"])
             st.session_state.credentials = flow.credentials
             st.query_params.clear()
             st.rerun()
         except Exception as e:
-            # 🌟 ここを変更：エラーを隠さずに表示して止める！
             st.error(f"⚠️ ログイン処理でエラーが発生しました。詳細: {e}")
             if st.button("🔄 URLを綺麗にして最初からやり直す"):
                 st.query_params.clear()
                 st.rerun()
             st.stop()
-    st.stop()
+    else:
+        # 🌟 ログインボタンを押す前：合言葉を作ってサーバーの記憶に保存する！
+        auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
+        auth_memory[state] = getattr(flow, 'code_verifier', None)
+
+        st.info("会社のアカウントでログインして、Googleドライブへの保存を許可してください。")
+        st.link_button("Googleでログイン", auth_url)
+        st.stop()
 
 drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
 
@@ -106,7 +121,6 @@ def calculate_path_score(image, points):
             y = int(p1[1] * (1-t) + p2[1] * t)
             if 0 <= y < gray_img.shape[0] and 0 <= x < gray_img.shape[1]:
                 brightness = gray_img[y, x]
-                # 「薄いグレー（明るさ215〜250）」は建物なので超避ける
                 if 215 < brightness < 250:
                     score += 1000
                 else:
@@ -137,32 +151,26 @@ def draw_label(image, target_x, target_y, label_text):
     rect_right = rect_left + w
     rect_bottom = rect_top + h
 
-    # ルート候補を作成
     path_straight = [(center_x, center_y), (pin_x, pin_y)]
     path_horz = [(center_x, center_y), (pin_x, center_y), (pin_x, pin_y)]
     path_vert = [(center_x, center_y), (center_x, pin_y), (pin_x, pin_y)]
 
-    # --- 常に「建物回避」のロジックを実行 ---
     scores = {
         '直線': calculate_path_score(image, path_straight),
         '横ルート': calculate_path_score(image, path_horz),
         '縦ルート': calculate_path_score(image, path_vert)
     }
-    # 一番スコアが低い（安全な）ルートを選ぶ
     best_route = min(scores, key=scores.get)
 
     if best_route == '直線': best_points = path_straight
     elif best_route == '横ルート': best_points = path_horz
     else: best_points = path_vert
 
-    # 線を描く
     for i in range(len(best_points) - 1):
         draw.line([best_points[i], best_points[i+1]], fill="red", width=3)
     
-    # 白い箱を描く
     draw.rectangle((rect_left, rect_top, rect_right, rect_bottom), fill="white", outline="red", width=3)
     
-    # 文字を描く
     text_x = rect_left + padding_x
     text_y = rect_top + padding_y - bbox[1]
     draw.text((text_x, text_y), label_text, font=font, fill="black")
@@ -172,13 +180,11 @@ def draw_label(image, target_x, target_y, label_text):
 # --- 🏠 アプリ画面の構成 ---
 st.title("📍 建築現場マップ作成ツール")
 
-# ＝＝＝ 1. 地図の設定とアップロード ＝＝＝
 st.subheader("⚙️ 1. 地図の設定とアップロード")
 label_text = st.text_input("吹き出しの文字（任意）", "建築現場")
 
 uploaded_file = st.file_uploader("現場のスクショをアップロードしてください", type=["png", "jpg", "jpeg"])
 
-# ＝＝＝ 2. 地図作成エリア ＝＝＝
 if uploaded_file:
     st.write("---")
     st.subheader("🎨 2. 地図の作成")
@@ -195,11 +201,9 @@ if uploaded_file:
     if coords:
         target_x, target_y = coords['x'], coords['y']
         
-        # 画像を作成
         result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
         st.image(result_image)
 
-        # ＝＝＝ 3. 保存・ダウンロードエリア ＝＝＝
         st.write("---")
         st.subheader("🚀 3. 地図の保存・ダウンロード")
 
