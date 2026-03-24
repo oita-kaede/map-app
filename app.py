@@ -40,10 +40,9 @@ if "credentials" not in st.session_state:
     
     if "code" in st.query_params:
         try:
-            # 🌟 Googleから戻ってきた時：サーバーの記憶から合言葉を復元する！
             state = st.query_params.get("state")
             if state in auth_memory:
-                flow.code_verifier = auth_memory.pop(state) # 記憶から取り出してセット
+                flow.code_verifier = auth_memory.pop(state)
 
             flow.fetch_token(code=st.query_params["code"])
             st.session_state.credentials = flow.credentials
@@ -56,7 +55,6 @@ if "credentials" not in st.session_state:
                 st.rerun()
             st.stop()
     else:
-        # 🌟 ログインボタンを押す前：合言葉を作ってサーバーの記憶に保存する！
         auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
         auth_memory[state] = getattr(flow, 'code_verifier', None)
 
@@ -66,27 +64,56 @@ if "credentials" not in st.session_state:
 
 drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
 
-# --- 📁 フォルダ操作関数 ---
+# --- 🌟 追加機能：ショートカットの本当のIDを見つける関数 ---
+def get_real_id(file_info):
+    """選んだのがショートカットなら「リンク先の本当のID」を返す"""
+    if not file_info: 
+        return None
+    if file_info.get('mimeType') == 'application/vnd.google-apps.shortcut':
+        return file_info.get('shortcutDetails', {}).get('targetId')
+    return file_info.get('id')
+
+# --- 📁 フォルダ操作関数（ショートカット対応版） ---
 def list_subfolders(parent_id):
     try:
-        query = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        # 普通のフォルダ ＋ ショートカット の両方を探す
+        query = f"'{parent_id}' in parents and (mimeType = 'application/vnd.google-apps.folder' or mimeType = 'application/vnd.google-apps.shortcut') and trashed = false"
         response = drive_service.files().list(
             q=query, spaces='drive', corpora='allDrives',
-            includeItemsFromAllDrives=True, supportsAllDrives=True, fields='files(id, name)'
+            includeItemsFromAllDrives=True, supportsAllDrives=True, 
+            fields='files(id, name, mimeType, shortcutDetails)'
         ).execute()
-        return sorted(response.get('files', []), key=lambda x: x['name'])
+        
+        # ファイルへのショートカットは除外し、フォルダ関連だけをリストにする
+        valid_files = []
+        for f in response.get('files', []):
+            if f['mimeType'] == 'application/vnd.google-apps.folder':
+                valid_files.append(f)
+            elif f['mimeType'] == 'application/vnd.google-apps.shortcut':
+                # ショートカットのリンク先がフォルダならリストに入れる
+                if f.get('shortcutDetails', {}).get('targetMimeType') == 'application/vnd.google-apps.folder':
+                    valid_files.append(f)
+                    
+        return sorted(valid_files, key=lambda x: x['name'])
     except Exception as e:
         return []
 
 def find_map_folder_auto(parent_id):
     try:
-        query = f"name contains '現場までの地図' and mimeType = 'application/vnd.google-apps.folder' and '{parent_id}' in parents and trashed = false"
+        query = f"name contains '現場までの地図' and (mimeType = 'application/vnd.google-apps.folder' or mimeType = 'application/vnd.google-apps.shortcut') and '{parent_id}' in parents and trashed = false"
         response = drive_service.files().list(
             q=query, spaces='drive', corpora='allDrives',
-            includeItemsFromAllDrives=True, supportsAllDrives=True, fields='files(id, name)'
+            includeItemsFromAllDrives=True, supportsAllDrives=True, 
+            fields='files(id, name, mimeType, shortcutDetails)'
         ).execute()
         files = response.get('files', [])
-        return files[0] if files else None
+        if not files: return None
+        
+        f = files[0]
+        # もし「現場までの地図」自体がショートカットだった場合、本当のIDに変換して返す
+        if f['mimeType'] == 'application/vnd.google-apps.shortcut':
+            return {'name': f['name'], 'id': f['shortcutDetails']['targetId']}
+        return f
     except Exception as e:
         return None
 
@@ -225,7 +252,8 @@ if uploaded_file:
             if jurisdiction == "工務店管轄":
                 staff_list = list_subfolders(ROOT_ID)
                 selected_staff = st.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name']) if staff_list else None
-                current_parent_id = selected_staff['id'] if selected_staff else ROOT_ID
+                # ✨ ショートカットなら本当のIDをセット
+                current_parent_id = get_real_id(selected_staff) if selected_staff else ROOT_ID
             else:
                 current_parent_id = ROOT_ID
                 st.write("※不動産管轄は直接お客様フォルダを選択します")
@@ -233,10 +261,12 @@ if uploaded_file:
         with col_folder2:
             customer_list = list_subfolders(current_parent_id) if current_parent_id else []
             selected_customer = st.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
+            # ✨ ショートカットなら本当のIDをセット
+            actual_customer_id = get_real_id(selected_customer)
 
         if selected_customer:
             with st.spinner("「現場までの地図」フォルダを確認中..."):
-                target_folder = find_map_folder_auto(selected_customer['id'])
+                target_folder = find_map_folder_auto(actual_customer_id)
             
             if target_folder:
                 st.success(f"保存先：{selected_customer['name']} ＞ {target_folder['name']}")
