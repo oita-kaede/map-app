@@ -73,7 +73,7 @@ def get_real_id(file_info):
         return file_info.get('shortcutDetails', {}).get('targetId')
     return file_info.get('id')
 
-# --- 📁 フォルダ操作関数（ショートカット対応版） ---
+# --- 📁 フォルダ操作関数（ショートカット対応 ＋ 読み込み上限突破版） ---
 def list_subfolders(parent_id):
     try:
         # 普通のフォルダ ＋ ショートカット の両方を探す
@@ -81,6 +81,7 @@ def list_subfolders(parent_id):
         response = drive_service.files().list(
             q=query, spaces='drive', corpora='allDrives',
             includeItemsFromAllDrives=True, supportsAllDrives=True, 
+            pageSize=1000, # ✨ ここを追加：1000件まで一気に読み込む！
             fields='files(id, name, mimeType, shortcutDetails)'
         ).execute()
         
@@ -104,6 +105,7 @@ def find_map_folder_auto(parent_id):
         response = drive_service.files().list(
             q=query, spaces='drive', corpora='allDrives',
             includeItemsFromAllDrives=True, supportsAllDrives=True, 
+            pageSize=1000, # ✨ ここを追加
             fields='files(id, name, mimeType, shortcutDetails)'
         ).execute()
         files = response.get('files', [])
@@ -252,7 +254,6 @@ if uploaded_file:
             if jurisdiction == "工務店管轄":
                 staff_list = list_subfolders(ROOT_ID)
                 selected_staff = st.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name']) if staff_list else None
-                # ✨ ショートカットなら本当のIDをセット
                 current_parent_id = get_real_id(selected_staff) if selected_staff else ROOT_ID
             else:
                 current_parent_id = ROOT_ID
@@ -261,7 +262,6 @@ if uploaded_file:
         with col_folder2:
             customer_list = list_subfolders(current_parent_id) if current_parent_id else []
             selected_customer = st.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
-            # ✨ ショートカットなら本当のIDをセット
             actual_customer_id = get_real_id(selected_customer)
 
         if selected_customer:
