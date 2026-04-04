@@ -8,17 +8,22 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import io
+
 # --- 🛠️ 設定：各管轄のスタート地点ID ---
 DRIVE_IDS = {
     "工務店管轄": "1nqci7jC-FL4PUGuuSJ-FzMB7VwLLjY5w",
     "不動産管轄": "1I8DmZL_B2fi-IZiDBSivo71ghBA-PWA7"
 }
+
 st.set_page_config(page_title="建築現場マップ作成ツール", layout="wide", page_icon="📍")
+
 # --- 🧠 サーバーの記憶領域（タブが変わっても忘れないメモ） ---
 @st.cache_resource
 def get_auth_memory():
     return {}
+
 auth_memory = get_auth_memory()
+
 # --- 🔐 Google認証 ---
 def get_flow():
     client_config = json.loads(st.secrets["GCP_OAUTH_JSON"])
@@ -28,6 +33,7 @@ def get_flow():
         redirect_uri=client_config["web"]["redirect_uris"][0]
     )
     return flow
+
 if "credentials" not in st.session_state:
     st.title("🔒 Googleログインが必要です")
     flow = get_flow()
@@ -37,6 +43,7 @@ if "credentials" not in st.session_state:
             state = st.query_params.get("state")
             if state in auth_memory:
                 flow.code_verifier = auth_memory.pop(state)
+
             flow.fetch_token(code=st.query_params["code"])
             st.session_state.credentials = flow.credentials
             st.query_params.clear()
@@ -50,10 +57,13 @@ if "credentials" not in st.session_state:
     else:
         auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
         auth_memory[state] = getattr(flow, 'code_verifier', None)
+
         st.info("会社のアカウントでログインして、Googleドライブへの保存を許可してください。")
         st.link_button("Googleでログイン", auth_url)
         st.stop()
+
 drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
+
 # --- 🌟 追加機能：ショートカットの本当のIDを見つける関数 ---
 def get_real_id(file_info):
     """選んだのがショートカットなら「リンク先の本当のID」を返す"""
@@ -62,6 +72,7 @@ def get_real_id(file_info):
     if file_info.get('mimeType') == 'application/vnd.google-apps.shortcut':
         return file_info.get('shortcutDetails', {}).get('targetId')
     return file_info.get('id')
+
 # --- 📁 フォルダ操作関数（ショートカット対応 ＋ 読み込み上限突破版） ---
 def list_subfolders(parent_id):
     try:
@@ -87,6 +98,7 @@ def list_subfolders(parent_id):
         return sorted(valid_files, key=lambda x: x['name'])
     except Exception as e:
         return []
+
 def find_map_folder_auto(parent_id):
     try:
         query = f"name contains '現場までの地図' and (mimeType = 'application/vnd.google-apps.folder' or mimeType = 'application/vnd.google-apps.shortcut') and '{parent_id}' in parents and trashed = false"
@@ -106,6 +118,7 @@ def find_map_folder_auto(parent_id):
         return f
     except Exception as e:
         return None
+
 # --- 🤖 1. 赤いピンの先端を探す ---
 def get_pin_tip_position(pil_image):
     img_array = np.array(pil_image)
@@ -121,6 +134,7 @@ def get_pin_tip_position(pil_image):
         bottom = largest[largest[:, :, 1].argmax()][0]
         return int(bottom[0]), int(bottom[1])
     return pil_image.width // 2, pil_image.height // 2
+
 # --- 🤖 2. 建物を避ける計算 ---
 def calculate_path_score(image, points):
     gray_img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
@@ -143,6 +157,7 @@ def calculate_path_score(image, points):
                 sample_count += 1
     if sample_count == 0: return 9999999
     return score / sample_count
+
 # --- 🎨 3. 線と文字を描く（常に建物回避モード） ---
 def draw_label(image, target_x, target_y, label_text):
     draw = ImageDraw.Draw(image)
@@ -154,6 +169,7 @@ def draw_label(image, target_x, target_y, label_text):
         font = ImageFont.truetype("ipaexg.ttf", font_size)
     except:
         font = ImageFont.load_default()
+
     bbox = draw.textbbox((0, 0), label_text, font=font)
     w = (bbox[2] - bbox[0]) + padding_x * 2
     h = (bbox[3] - bbox[1]) + padding_y * 2
@@ -163,18 +179,22 @@ def draw_label(image, target_x, target_y, label_text):
     rect_top = target_y - (h / 2)
     rect_right = rect_left + w
     rect_bottom = rect_top + h
+
     path_straight = [(center_x, center_y), (pin_x, pin_y)]
     path_horz = [(center_x, center_y), (pin_x, center_y), (pin_x, pin_y)]
     path_vert = [(center_x, center_y), (center_x, pin_y), (pin_x, pin_y)]
+
     scores = {
         '直線': calculate_path_score(image, path_straight),
         '横ルート': calculate_path_score(image, path_horz),
         '縦ルート': calculate_path_score(image, path_vert)
     }
     best_route = min(scores, key=scores.get)
+
     if best_route == '直線': best_points = path_straight
     elif best_route == '横ルート': best_points = path_horz
     else: best_points = path_vert
+
     for i in range(len(best_points) - 1):
         draw.line([best_points[i], best_points[i+1]], fill="red", width=3)
     
@@ -185,83 +205,111 @@ def draw_label(image, target_x, target_y, label_text):
     draw.text((text_x, text_y), label_text, font=font, fill="black")
     
     return image
-# --- 🏠 アプリ画面の構成 ---
+
+# --- 🏠 アプリ画面の構成（左右2カラム） ---
 st.title("📍 建築現場マップ作成ツール")
-st.subheader("⚙️ 1. 地図の設定とアップロード")
-label_text = st.text_input("吹き出しの文字（任意）", "建築現場")
-uploaded_file = st.file_uploader("現場のスクショをアップロードしてください", type=["png", "jpg", "jpeg"])
-if uploaded_file:
-    st.write("---")
-    st.subheader("🎨 2. 地図の作成")
-    image = Image.open(uploaded_file).convert("RGB")
-    
-    base_width = 700
-    w_percent = (base_width / float(image.size[0]))
-    h_size = int((float(image.size[1]) * float(w_percent)))
-    resized_image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
-    st.info("👇 **道路の上など、文字を置きたい場所をクリックしてください**（AIが建物を避けて線を引きます）")
-    coords = streamlit_image_coordinates(resized_image, key="click")
-    if coords:
-        target_x, target_y = coords['x'], coords['y']
-        
-        result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
-        st.image(result_image)
+
+# --- 右パネル用：先に画像処理を実行 ---
+uploaded_file = None
+label_text = "建築現場"
+resized_image = None
+result_image = None
+
+# --- 左右2カラムに分割（左:操作パネル、右:地図プレビュー） ---
+col_left, col_right = st.columns([1, 2])
+
+with col_left:
+    st.subheader("⚙️ 設定")
+    label_text = st.text_input("吹き出しの文字（任意）", "建築現場")
+    uploaded_file = st.file_uploader("スクショをアップロード", type=["png", "jpg", "jpeg"])
+
+with col_right:
+    if uploaded_file:
+        st.subheader("🎨 地図プレビュー")
+        image = Image.open(uploaded_file).convert("RGB")
+
+        base_width = 700
+        w_percent = (base_width / float(image.size[0]))
+        h_size = int((float(image.size[1]) * float(w_percent)))
+        resized_image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
+
+        # result_imageがあればそちらを表示、なければクリック用画像を表示
+        if "result_image" in st.session_state:
+            st.success("✅ 文字を配置しました（クリックで再配置できます）")
+            coords = streamlit_image_coordinates(st.session_state.result_image, key="click")
+        else:
+            st.info("👇 **文字を置きたい場所をクリック**（AIが建物を避けて線を引きます）")
+            coords = streamlit_image_coordinates(resized_image, key="click")
+
+        if coords:
+            target_x, target_y = coords['x'], coords['y']
+            result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
+            st.session_state.result_image = result_image
+            st.rerun()
+    else:
+        st.subheader("🎨 地図プレビュー")
+        st.info("👆 左の操作パネルからスクショをアップロードしてください。")
+        # アップロードされていない場合、結果画像もクリア
+        if "result_image" in st.session_state:
+            del st.session_state["result_image"]
+
+# --- 左パネルの保存セクション（result_imageが存在する場合のみ） ---
+with col_left:
+    if uploaded_file and "result_image" in st.session_state:
         st.write("---")
-        st.subheader("🚀 3. 地図の保存・ダウンロード")
+        st.subheader("📥 保存")
+
         buf_dl = io.BytesIO()
-        result_image.save(buf_dl, format="PNG")
-        
-        st.markdown("**📁 パソコンに保存する（手動用）**")
-        st.download_button("📥 ここから「挨拶チラシ地図.png」をダウンロード", buf_dl.getvalue(), "挨拶チラシ地図.png", "image/png")
-        
+        st.session_state.result_image.save(buf_dl, format="PNG")
+
+        st.markdown("**📁 パソコンに保存**")
+        st.download_button("📥 ダウンロード", buf_dl.getvalue(), "挨拶チラシ地図.png", "image/png", use_container_width=True)
+
         st.write("---")
-        st.markdown("**☁️ ドライブのフォルダに保存する（自動用）**")
+        st.markdown("**☁️ ドライブに保存**")
         jurisdiction = st.radio("管轄を選択", list(DRIVE_IDS.keys()), horizontal=True)
         ROOT_ID = DRIVE_IDS[jurisdiction]
-        col_folder1, col_folder2 = st.columns(2)
-        
-        with col_folder1:
-            if jurisdiction == "工務店管轄":
-                staff_list = list_subfolders(ROOT_ID)
-                selected_staff = st.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name']) if staff_list else None
-                current_parent_id = get_real_id(selected_staff) if selected_staff else ROOT_ID
-            else:
-                current_parent_id = ROOT_ID
-                st.write("※不動産管轄は直接お客様フォルダを選択します")
-        
-        with col_folder2:
-            customer_list = list_subfolders(current_parent_id) if current_parent_id else []
-            selected_customer = st.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
-            actual_customer_id = get_real_id(selected_customer)
+
+        if jurisdiction == "工務店管轄":
+            staff_list = list_subfolders(ROOT_ID)
+            selected_staff = st.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name']) if staff_list else None
+            current_parent_id = get_real_id(selected_staff) if selected_staff else ROOT_ID
+        else:
+            current_parent_id = ROOT_ID
+            st.caption("※不動産管轄は直接お客様フォルダを選択します")
+
+        customer_list = list_subfolders(current_parent_id) if current_parent_id else []
+        selected_customer = st.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
+        actual_customer_id = get_real_id(selected_customer)
+
         if selected_customer:
             with st.spinner("「現場までの地図」フォルダを確認中..."):
                 target_folder = find_map_folder_auto(actual_customer_id)
-            
+
             if target_folder:
                 st.success(f"保存先：{selected_customer['name']} ＞ {target_folder['name']}")
-                
-                if st.button("☁️ このフォルダに「挨拶チラシ地図」として保存する", type="primary"):
+
+                if st.button("☁️ ドライブに保存する", type="primary", use_container_width=True):
                     with st.spinner("アップロード中..."):
                         try:
                             buf_drive = io.BytesIO()
-                            result_image.save(buf_drive, format="PNG")
+                            st.session_state.result_image.save(buf_drive, format="PNG")
                             buf_drive.seek(0)
-                            
+
                             file_name = "挨拶チラシ地図.png"
                             file_metadata = {'name': file_name, 'parents': [target_folder['id']]}
                             media = MediaIoBaseUpload(buf_drive, mimetype='image/png')
                             drive_service.files().create(body=file_metadata, media_body=media, supportsAllDrives=True).execute()
-                            
-                            st.success(f"✅ 「{target_folder['name']}」フォルダに保存しました！")
+
+                            st.success(f"✅ 保存しました！")
                             st.balloons()
                         except Exception as e:
                             st.error(f"保存エラー: {e}")
             else:
-                st.error(f"❌ 「現場までの地図」フォルダが見つかりません。")
-                st.warning("☝️ ドライブ上にフォルダがない場合は、上の「📥 ダウンロード」ボタンからパソコンに保存してください。")
-                
-else:
-    st.info("👆 まずは地図のスクショをアップロードしてください。")
+                st.error("❌ 「現場までの地図」フォルダが見つかりません。")
+                st.warning("☝️ 上の「📥 ダウンロード」ボタンから保存してください。")
+
+# --- サイドバー ---
 st.sidebar.title("設定")
 if st.sidebar.button("🔄 ログイン状態をリセットする"):
     if "credentials" in st.session_state:
