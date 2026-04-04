@@ -223,38 +223,7 @@ with col_left:
     label_text = st.text_input("吹き出しの文字（任意）", "建築現場")
     uploaded_file = st.file_uploader("スクショをアップロード", type=["png", "jpg", "jpeg"])
 
-with col_right:
-    if uploaded_file:
-        st.subheader("🎨 地図プレビュー")
-        image = Image.open(uploaded_file).convert("RGB")
-
-        base_width = 700
-        w_percent = (base_width / float(image.size[0]))
-        h_size = int((float(image.size[1]) * float(w_percent)))
-        resized_image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
-
-        # result_imageがあればそちらを表示、なければクリック用画像を表示
-        if "result_image" in st.session_state:
-            st.success("✅ 文字を配置しました（クリックで再配置できます）")
-            coords = streamlit_image_coordinates(st.session_state.result_image, key="click")
-        else:
-            st.info("👇 **文字を置きたい場所をクリック**（AIが建物を避けて線を引きます）")
-            coords = streamlit_image_coordinates(resized_image, key="click")
-
-        if coords:
-            target_x, target_y = coords['x'], coords['y']
-            result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
-            st.session_state.result_image = result_image
-            st.rerun()
-    else:
-        st.subheader("🎨 地図プレビュー")
-        st.info("👆 左の操作パネルからスクショをアップロードしてください。")
-        # アップロードされていない場合、結果画像もクリア
-        if "result_image" in st.session_state:
-            del st.session_state["result_image"]
-
-# --- 左パネルの保存セクション（result_imageが存在する場合のみ） ---
-with col_left:
+    # --- 保存セクション（result_imageが存在する場合のみ表示） ---
     if uploaded_file and "result_image" in st.session_state:
         st.write("---")
         st.subheader("📥 保存")
@@ -308,6 +277,43 @@ with col_left:
             else:
                 st.error("❌ 「現場までの地図」フォルダが見つかりません。")
                 st.warning("☝️ 上の「📥 ダウンロード」ボタンから保存してください。")
+
+with col_right:
+    if uploaded_file:
+        st.subheader("🎨 地図プレビュー")
+        image = Image.open(uploaded_file).convert("RGB")
+
+        base_width = 700
+        w_percent = (base_width / float(image.size[0]))
+        h_size = int((float(image.size[1]) * float(w_percent)))
+        resized_image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
+
+        # 表示画像：結果があればそれ、なければ元画像（常に1枚だけ表示）
+        if "result_image" in st.session_state:
+            st.success("✅ 文字を配置しました（クリックで再配置できます）")
+            display_image = st.session_state.result_image
+        else:
+            st.info("👇 **文字を置きたい場所をクリック**（AIが建物を避けて線を引きます）")
+            display_image = resized_image
+
+        coords = streamlit_image_coordinates(display_image, key="click")
+
+        # 新しいクリックかどうか判定（同じ座標での再実行を防止）
+        if coords:
+            click_id = f"{coords['x']}_{coords['y']}"
+            if st.session_state.get("last_click_id") != click_id:
+                st.session_state.last_click_id = click_id
+                target_x, target_y = coords['x'], coords['y']
+                result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
+                st.session_state.result_image = result_image
+                st.rerun()
+    else:
+        st.subheader("🎨 地図プレビュー")
+        st.info("👆 左の操作パネルからスクショをアップロードしてください。")
+        if "result_image" in st.session_state:
+            del st.session_state["result_image"]
+        if "last_click_id" in st.session_state:
+            del st.session_state["last_click_id"]
 
 # --- サイドバー ---
 st.sidebar.title("設定")
