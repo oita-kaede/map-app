@@ -8,7 +8,6 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import io
-import streamlit.components.v1 as components
 
 # --- 🛠️ 設定：各管轄のスタート地点ID ---
 DRIVE_IDS = {
@@ -61,15 +60,6 @@ if "credentials" not in st.session_state:
 
         st.info("会社のアカウントでログインして、Googleドライブへの保存を許可してください。")
         st.link_button("Googleでログイン", auth_url)
-        # link_buttonのtarget="_blank"を"_self"に変更（同じタブで遷移）
-        components.html("""<script>
-            const links = window.parent.document.getElementsByTagName('a');
-            for (let link of links) {
-                if (link.textContent.trim() === 'Googleでログイン') {
-                    link.target = '_self';
-                }
-            }
-        </script>""", height=0)
         st.stop()
 
 drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
