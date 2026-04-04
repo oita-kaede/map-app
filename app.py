@@ -59,7 +59,12 @@ if "credentials" not in st.session_state:
         auth_memory[state] = getattr(flow, 'code_verifier', None)
 
         st.info("会社のアカウントでログインして、Googleドライブへの保存を許可してください。")
-        st.link_button("Googleでログイン", auth_url)
+        st.markdown(
+            f'<a href="{auth_url}" target="_self" style="display:inline-block;padding:0.5rem 1rem;'
+            f'background-color:#FF4B4B;color:white;border-radius:0.5rem;text-decoration:none;'
+            f'font-weight:600;font-size:1rem;">Googleでログイン</a>',
+            unsafe_allow_html=True
+        )
         st.stop()
 
 drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
@@ -206,94 +211,97 @@ def draw_label(image, target_x, target_y, label_text):
     
     return image
 
-# --- 🏠 アプリ画面の構成 ---
+# --- 🏠 アプリ画面の構成（左右2カラム） ---
 st.title("📍 建築現場マップ作成ツール")
 
-st.subheader("⚙️ 1. 地図の設定とアップロード")
-label_text = st.text_input("吹き出しの文字（任意）", "建築現場")
+# --- 左右2カラムに分割（左:操作パネル、右:地図プレビュー） ---
+col_left, col_right = st.columns([1, 2])
 
-uploaded_file = st.file_uploader("現場のスクショをアップロードしてください", type=["png", "jpg", "jpeg"])
+with col_left:
+    st.subheader("⚙️ 設定")
+    label_text = st.text_input("吹き出しの文字（任意）", "建築現場")
+    uploaded_file = st.file_uploader("スクショをアップロード", type=["png", "jpg", "jpeg"])
 
-if uploaded_file:
-    st.write("---")
-    st.subheader("🎨 2. 地図の作成")
-    image = Image.open(uploaded_file).convert("RGB")
-    
-    base_width = 700
-    w_percent = (base_width / float(image.size[0]))
-    h_size = int((float(image.size[1]) * float(w_percent)))
-    resized_image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
-
-    st.info("👇 **道路の上など、文字を置きたい場所をクリックしてください**（AIが建物を避けて線を引きます）")
-    coords = streamlit_image_coordinates(resized_image, key="click")
-
-    if coords:
-        target_x, target_y = coords['x'], coords['y']
-        
-        result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
-        st.image(result_image)
-
+    if uploaded_file and "result_image" in st.session_state:
         st.write("---")
-        st.subheader("🚀 3. 地図の保存・ダウンロード")
+        st.subheader("📥 保存")
 
         buf_dl = io.BytesIO()
-        result_image.save(buf_dl, format="PNG")
-        
-        st.markdown("**📁 パソコンに保存する（手動用）**")
-        st.download_button("📥 ここから「挨拶チラシ地図.png」をダウンロード", buf_dl.getvalue(), "挨拶チラシ地図.png", "image/png")
-        
-        st.write("---")
+        st.session_state.result_image.save(buf_dl, format="PNG")
 
-        st.markdown("**☁️ ドライブのフォルダに保存する（自動用）**")
+        st.markdown("**📁 パソコンに保存**")
+        st.download_button("📥 ダウンロード", buf_dl.getvalue(), "挨拶チラシ地図.png", "image/png", use_container_width=True)
+
+        st.write("---")
+        st.markdown("**☁️ ドライブに保存**")
         jurisdiction = st.radio("管轄を選択", list(DRIVE_IDS.keys()), horizontal=True)
         ROOT_ID = DRIVE_IDS[jurisdiction]
 
-        col_folder1, col_folder2 = st.columns(2)
-        
-        with col_folder1:
-            if jurisdiction == "工務店管轄":
-                staff_list = list_subfolders(ROOT_ID)
-                selected_staff = st.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name']) if staff_list else None
-                current_parent_id = get_real_id(selected_staff) if selected_staff else ROOT_ID
-            else:
-                current_parent_id = ROOT_ID
-                st.write("※不動産管轄は直接お客様フォルダを選択します")
-        
-        with col_folder2:
-            customer_list = list_subfolders(current_parent_id) if current_parent_id else []
-            selected_customer = st.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
-            actual_customer_id = get_real_id(selected_customer)
+        if jurisdiction == "工務店管轄":
+            staff_list = list_subfolders(ROOT_ID)
+            selected_staff = st.selectbox("営業担当者を選択", staff_list, format_func=lambda x: x['name']) if staff_list else None
+            current_parent_id = get_real_id(selected_staff) if selected_staff else ROOT_ID
+        else:
+            current_parent_id = ROOT_ID
+            st.caption("※不動産管轄は直接お客様フォルダを選択します")
+
+        customer_list = list_subfolders(current_parent_id) if current_parent_id else []
+        selected_customer = st.selectbox("お客様 / 現場名を選択", customer_list, format_func=lambda x: x['name']) if customer_list else None
+        actual_customer_id = get_real_id(selected_customer)
 
         if selected_customer:
             with st.spinner("「現場までの地図」フォルダを確認中..."):
                 target_folder = find_map_folder_auto(actual_customer_id)
-            
+
             if target_folder:
                 st.success(f"保存先：{selected_customer['name']} ＞ {target_folder['name']}")
-                
-                if st.button("☁️ このフォルダに「挨拶チラシ地図」として保存する", type="primary"):
+
+                if st.button("☁️ ドライブに保存する", type="primary", use_container_width=True):
                     with st.spinner("アップロード中..."):
                         try:
                             buf_drive = io.BytesIO()
-                            result_image.save(buf_drive, format="PNG")
+                            st.session_state.result_image.save(buf_drive, format="PNG")
                             buf_drive.seek(0)
-                            
+
                             file_name = "挨拶チラシ地図.png"
                             file_metadata = {'name': file_name, 'parents': [target_folder['id']]}
                             media = MediaIoBaseUpload(buf_drive, mimetype='image/png')
                             drive_service.files().create(body=file_metadata, media_body=media, supportsAllDrives=True).execute()
-                            
-                            st.success(f"✅ 「{target_folder['name']}」フォルダに保存しました！")
+
+                            st.success(f"✅ 保存しました！")
                             st.balloons()
                         except Exception as e:
                             st.error(f"保存エラー: {e}")
             else:
-                st.error(f"❌ 「現場までの地図」フォルダが見つかりません。")
-                st.warning("☝️ ドライブ上にフォルダがない場合は、上の「📥 ダウンロード」ボタンからパソコンに保存してください。")
-                
-else:
-    st.info("👆 まずは地図のスクショをアップロードしてください。")
+                st.error("❌ 「現場までの地図」フォルダが見つかりません。")
+                st.warning("☝️ 上の「📥 ダウンロード」ボタンから保存してください。")
 
+with col_right:
+    if uploaded_file:
+        st.subheader("🎨 地図プレビュー")
+        image = Image.open(uploaded_file).convert("RGB")
+
+        base_width = 700
+        w_percent = (base_width / float(image.size[0]))
+        h_size = int((float(image.size[1]) * float(w_percent)))
+        resized_image = image.resize((base_width, h_size), Image.Resampling.LANCZOS)
+
+        st.info("👇 **文字を置きたい場所をクリック**（AIが建物を避けて線を引きます）")
+        coords = streamlit_image_coordinates(resized_image, key="click")
+
+        if coords:
+            target_x, target_y = coords['x'], coords['y']
+            result_image = draw_label(resized_image.copy(), target_x, target_y, label_text)
+            st.session_state.result_image = result_image
+            st.image(result_image, use_container_width=True)
+        else:
+            if "result_image" in st.session_state:
+                del st.session_state["result_image"]
+    else:
+        st.subheader("🎨 地図プレビュー")
+        st.info("👆 左の操作パネルからスクショをアップロードしてください。")
+
+# --- サイドバー ---
 st.sidebar.title("設定")
 if st.sidebar.button("🔄 ログイン状態をリセットする"):
     if "credentials" in st.session_state:
