@@ -60,11 +60,16 @@ if "credentials" not in st.session_state:
         auth_memory[state] = getattr(flow, 'code_verifier', None)
 
         st.info("会社のアカウントでログインして、Googleドライブへの保存を許可してください。")
-        if st.button("Googleでログイン", type="primary"):
-            components.html(
-                f'<script>window.top.location.href = decodeURIComponent("{auth_url}");</script>',
-                height=0
-            )
+        st.link_button("Googleでログイン", auth_url)
+        # link_buttonのtarget="_blank"を"_self"に変更（同じタブで遷移）
+        components.html("""<script>
+            const links = window.parent.document.getElementsByTagName('a');
+            for (let link of links) {
+                if (link.textContent.trim() === 'Googleでログイン') {
+                    link.target = '_self';
+                }
+            }
+        </script>""", height=0)
         st.stop()
 
 drive_service = build('drive', 'v3', credentials=st.session_state.credentials)
